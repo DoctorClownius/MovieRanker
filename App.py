@@ -1,8 +1,10 @@
 # Write your code here :-)
 import streamlit as st
 import csv
+import sqlite3
 import random
 import pandas as pd
+from datetime import datetime
 
 st.markdown("""
 <style>
@@ -30,36 +32,54 @@ div.stButton > button[kind="secondary"] {
 </style>
 """, unsafe_allow_html=True)
 
+current_year = datetime.now().year
+
 def load_movies():
+
+    connection = sqlite3.connect("recommendoza.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+    SELECT title, rating, seen, year
+    FROM movies
+    """)
+
     movies = {}
 
-    with open("movies.csv", "r", encoding="utf-8-sig") as file:
-        reader = csv.DictReader(file)
+    for title, rating, seen, year in cursor.fetchall():
 
-        for row in reader:
-            movies[row["Movie"]] = {
-                "rating": int(row["Rating"]),
-                "seen": row["Seen"].lower() == "true",
-                "year": int(row["Year"])
-            }
+        movies[title] = {
+            "rating": rating,
+            "seen": bool(seen),
+            "year": year
+        }
+
+    connection.close()
 
     return movies
 
 movies = load_movies()
 
 def save_movies(movies):
-    with open("movies.csv", "w", newline="", encoding="utf-8-sig") as file:
-        fieldnames = ["Movie", "Rating", "Seen", "Year"]
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
 
-        for movie, data in movies.items():
-            writer.writerow({
-                "Movie": movie,
-                "Rating": data["rating"],
-                "Seen": data["seen"],
-                "Year": data["year"]
-            })
+    connection = sqlite3.connect("recommendoza.db")
+    cursor = connection.cursor()
+
+    for title, data in movies.items():
+
+        cursor.execute("""
+        UPDATE movies
+        SET rating = ?, seen = ?, year = ?
+        WHERE title = ?
+        """, (
+            data["rating"],
+            int(data["seen"]),
+            data["year"],
+            title
+        ))
+
+    connection.commit()
+    connection.close()
 
 def update_elo(rating1, rating2, winner, k=32):
     expected1 = 1 / (1 + 10 ** ((rating2 - rating1) / 400))
@@ -105,6 +125,25 @@ def save_stats(stats):
                 "Stat": stat,
                 "Value": value
             })
+
+def add_or_mark_seen(title, year, rating=1000):
+
+    connection = sqlite3.connect("recommendoza.db")
+    cursor = connection.cursor()
+
+    cursor.execute("""
+    INSERT INTO movies (title, rating, seen, year)
+    VALUES (?, ?, 1, ?)
+    ON CONFLICT(title) DO UPDATE SET
+        seen = 1
+    """, (
+        title,
+        rating,
+        year
+    ))
+
+    connection.commit()
+    connection.close()
 
 stats = load_stats()
 
@@ -200,6 +239,36 @@ with col2:
             del st.session_state.movie2
 
             st.markdown('</div>', unsafe_allow_html=True)
+            st.rerun()
+
+st.divider()
+st.subheader("Add a Movie you've seen")
+
+title_col, year_col, button_add = st.columns([3,1,1])
+with title_col:
+    new_title = st.text_input("Movie title")
+
+with year_col:
+    new_year = st.number_input(
+        "Year",
+        min_value=1880,
+        max_value=2100,
+        value=current_year,
+        step=1
+    )
+
+with button_add:
+    st.write("")
+    st.write("")
+
+    if st.button("Add / Mark Seen"):
+
+        if new_title.strip() == "":
+            st.warning("Please enter a movie title.")
+
+        else:
+            add_or_mark_seen(new_title.strip(), new_year)
+            st.success(f"{new_title} is now marked as seen.")
             st.rerun()
 
 st.divider()
